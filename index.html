@@ -190,7 +190,7 @@ function shortDate(ds) { const [, m, d] = ds.split('-').map(Number); return m + 
 function staffById(id) { return S.staff.find(s => s.id === id); }
 function menuById(id) { return S.menu.find(m => m.id === id); }
 function meName() { const s = staffById(S.me); return s ? s.name : ''; }
-function smsName(o) { return o.cat === '샐러드' ? o.name + ' 샐러드' : o.name; }
+function smsName(o) { return o.cat === '샐러드' && !/샐러드$/.test(o.name) ? o.name + ' 샐러드' : o.name; }
 function optText(o) { return [o.dressing, o.toppings, o.note].filter(Boolean).join(', '); }
 function applyServer(d) {
   if (d.now) { S.now = parseStamp(d.now); S.offset = S.now - Date.now(); }
@@ -320,7 +320,9 @@ function viewOrder() {
         <span class="eyebrow">TODAY · ${esc(prettyDate(date))}</span>
         ${S.edit ? '' : `<button class="who" data-act="pick"><span class="av">${esc(me.name.slice(-2, -1) || me.name[0])}</span>${esc(me.name)}${ICON.down}</button>`}
       </div>
-      ${locked
+      ${S.edit
+        ? `<div class="row sb"><span class="big">관리자 수정 중</span><span class="sub num">${esc(S.cutoff)} 마감</span></div><div class="sub">마감과 상관없이 저장돼요. 이미 문자를 보냈다면 '오늘 현황'에서 변경 문자를 확인하세요</div>`
+        : locked
         ? `<div class="row sb"><span class="big">주문 마감</span><span class="sub num">${esc(S.cutoff)}</span></div><div class="sub">변경이 필요하면 ${esc(S.adminName)}에게 말해주세요</div>`
         : `<div class="row sb"><span class="big">마감까지 ${esc(remain || '')}</span><span class="sub num">${esc(S.cutoff)}</span></div><div class="bar"><i style="width:${barPct()}%"></i></div>`}
     </div>
@@ -401,7 +403,7 @@ function viewMonth() {
   const isAdmin = !!S.pin;
   const head = `<div class="row sb"><button class="btn sm" data-act="ym" data-v="-1">‹ 이전</button><h1 class="h1">${y}년 ${mo}월 정산</h1><button class="btn sm" data-act="ym" data-v="1" ${ym >= S.today.slice(0, 7) ? 'disabled style="opacity:.4"' : ''}>다음 ›</button></div>`;
   if (!m) return head + '<div class="card muted">불러오는 중…</div>';
-  const bill = m.billing;
+  const bill = (m.billing && m.billing.amount > 0) ? m.billing : null;
   const diff = bill ? m.total - bill.amount : null;
   const notice = '[' + mo + '월 ' + S.company + ' 점심값]\n' + m.people.filter(p => p.total > 0).map(p => p.name + ' ' + won(p.total)).join('\n') + '\n합계 ' + won(m.total);
   const mineByDate = {};
@@ -476,7 +478,7 @@ function openSalad(menuId, preset) {
   const draw = () => {
     const unit = mn.price + st.toppings.reduce((a, t) => a + (S.options.topping.find(x => x.name === t)?.price || 0), 0);
     m.innerHTML = `<div class="overlay" data-act="closeModal"><div class="modal">
-      <div class="row" style="gap:12px"><img src="${esc(mn.photo)}" alt="" style="width:56px;height:56px;border-radius:14px;object-fit:cover"><div><h2 class="h2">${esc(mn.name)} 샐러드</h2><div class="small muted num">${won(mn.price)}</div></div></div>
+      <div class="row" style="gap:12px"><img src="${esc(mn.photo)}" alt="" style="width:56px;height:56px;border-radius:14px;object-fit:cover"><div><h2 class="h2">${esc(smsName(mn))}</h2><div class="small muted num">${won(mn.price)}</div></div></div>
       <div><div class="small b muted" style="margin-bottom:8px">드레싱 <span style="color:var(--warn)">필수</span></div><div class="pills">${S.options.dressing.map(d => `<button class="opt ${st.dressing === d.name ? 'on' : ''}" data-d="${esc(d.name)}">${esc(d.name)}</button>`).join('')}</div></div>
       <div><div class="small b muted" style="margin-bottom:8px">추가 토핑</div><div class="pills">${S.options.topping.map(t => `<button class="opt tg sq ${st.toppings.includes(t.name) ? 'on' : ''}" data-t="${esc(t.name)}">${esc(t.name)} +${won(t.price)}</button>`).join('')}</div></div>
       <input class="inp" id="sal-note" placeholder="요청사항 (예: 드레싱 따로)" value="${esc(st.note)}" maxlength="40">
