@@ -162,7 +162,7 @@ const S = {
   today: '', now: null, offset: 0, cutoff: '09:00', locked: false,
   company: '', shopName: '', shopPhone: '', adminName: '',
   staff: [], menu: [], options: { dressing: [], topping: [] }, orders: [], day: {}, recent: [],
-  cart: { skip: false, items: [] }, savedKey: '', edit: null,
+  cart: { skip: false, items: [] }, savedKey: '', edit: null, editOrders: [], edDate: '', edStaff: '',
   month: null, ym: '', adminStaff: null, adminMenu: null, newMenu: { cat: '샌드위치', name: '', price: '', photo: '' }, busy: false
 };
 try { S.me = localStorage.getItem('lcs_me') || null; } catch (e) {}
@@ -196,9 +196,14 @@ function applyServer(d) {
   if (d.now) { S.now = parseStamp(d.now); S.offset = S.now - Date.now(); }
   if (d.today) S.today = d.today;
   if (d.cutoff) S.cutoff = d.cutoff;
-  if (typeof d.locked === 'boolean') S.locked = d.locked;
-  if (d.orders) S.orders = d.orders;
-  if (d.day) S.day = d.day;
+  const dDate = d.date || d.today || S.today;
+  const isToday = dDate === S.today;
+  if (isToday && typeof d.locked === 'boolean') S.locked = d.locked;
+  if (d.orders) {
+    if (isToday) S.orders = d.orders;
+    if (S.edit && dDate === S.edit.date) S.editOrders = d.orders;
+  }
+  if (d.day && isToday) S.day = d.day;
 }
 function clientLocked() {
   if (S.edit) return false;
@@ -244,7 +249,16 @@ function cartFromOrders(list) {
 function linePrice(it) { const m = menuById(it.menuId); if (!m) return 0; let u = m.price; (it.toppings || []).forEach(t => { const o = S.options.topping.find(x => x.name === t); if (o) u += o.price; }); return u; }
 function cartTotal() { return S.cart.items.reduce((a, it) => a + linePrice(it) * it.qty, 0); }
 function addLine(it) { S.cart.skip = false; const k = lineKey(it); const f = S.cart.items.find(x => lineKey(x) === k); if (f) f.qty = Math.min(20, f.qty + it.qty); else S.cart.items.push(it); render(); }
-function myOrders() { const id = S.edit ? S.edit.staffId : S.me; return S.orders.filter(o => o.staffId === id); }
+function dayChip(ds) { const [y, m, d] = ds.split('-').map(Number); const w = DOW[new Date(y, m - 1, d).getDay()]; return (ds === S.today ? '오늘 ' : '') + m + '/' + d + '(' + w + ')'; }
+function recentDays() { const out = []; const [y, m, d] = S.today.split('-').map(Number); const dt = new Date(y, m - 1, d); while (out.length < 8) { const w = dt.getDay(); if (w !== 0 && w !== 6) out.push(fmtDate(dt)); dt.setDate(dt.getDate() - 1); } return out; }
+function editLabelOf(date, staffId) { const [, m, d] = date.split('-').map(Number); const st = staffById(staffId); return m + '월 ' + d + '일 ' + (st ? st.name : ''); }
+function editLabel() { return S.edit ? editLabelOf(S.edit.date, S.edit.staffId) : ''; }
+function dayListHtml() {
+  const list = S.editOrders.filter(o => o.kind === '주문');
+  if (!list.length) return '<div class="small muted" style="padding-top:6px;border-top:1px solid var(--line2)">이 날 저장된 주문이 없어요</div>';
+  return '<div style="padding-top:6px;border-top:1px solid var(--line2)"><div class="small b muted" style="margin-bottom:4px">이 날 전체 주문 ' + list.reduce((a, o) => a + o.qty, 0) + '개</div>' + list.map(o => '<div class="small" style="padding:2px 0">' + esc(o.staffName) + ' · ' + esc(smsName(o)) + (o.qty > 1 ? ' ×' + o.qty : '') + (optText(o) ? ' <span class="muted">(' + esc(optText(o)) + ')</span>' : '') + ' <span class="muted num">' + won(o.amount) + '</span></div>').join('') + '</div>';
+}
+function myOrders() { return S.edit ? S.editOrders.filter(o => o.staffId === S.edit.staffId) : S.orders.filter(o => o.staffId === S.me); }
 function syncCartFromServer() { const c = cartFromOrders(myOrders()); S.cart = c; S.savedKey = cartKey(c); }
 
 // ───────────────────── 문자 문구 ─────────────────────
@@ -312,9 +326,9 @@ function viewOrder() {
   let banner = '';
   if (S.cart.skip && !changed) banner = `<div class="banner ok"><div class="info"><span class="k" style="color:var(--green)">오늘은 안 먹음으로 저장됨</span><span class="v">생각이 바뀌면 메뉴를 고르면 돼요</span></div></div>`;
   else if (!changed && hasSaved) banner = `<div class="banner ok"><div class="info"><span class="k" style="color:var(--green)">${ICON.check} 주문 완료${savedAt ? ' · ' + savedAt : ''}</span><span class="v">${esc(S.cart.items.map(it => menuById(it.menuId)?.name + (it.qty > 1 ? ' ×' + it.qty : '')).join(', '))} · ${won(cartTotal())}</span><span class="small muted">${locked ? '마감됐어요' : S.cutoff + '까지 변경 가능'}</span></div><button class="btn sm" data-act="tab" data-v="today">현황 보기</button></div>`;
-  else if (changed) banner = `<div class="banner chg"><div class="info"><span class="k">${S.cart.skip ? '오늘은 안 먹음' : hasSaved ? '변경할 주문' : '내 주문'}</span><span class="v">${S.cart.skip ? '저장을 눌러주세요' : esc(S.cart.items.map(it => menuById(it.menuId)?.name + (it.qty > 1 ? ' ×' + it.qty : '')).join(', ')) + ' · ' + won(cartTotal())}</span></div><button class="btn pri sm" data-act="save" ${S.busy || (!S.cart.skip && !S.cart.items.length) ? 'disabled' : ''}>${hasSaved ? '변경 저장' : '주문 저장'}</button></div>`;
+  else if (changed) banner = `<div class="banner chg"><div class="info"><span class="k">${S.cart.skip ? '오늘은 안 먹음' : hasSaved ? '변경할 주문' : '내 주문'}</span><span class="v">${S.cart.skip ? '저장을 눌러주세요' : esc(S.cart.items.map(it => menuById(it.menuId)?.name + (it.qty > 1 ? ' ×' + it.qty : '')).join(', ')) + ' · ' + won(cartTotal())}</span></div><button class="btn pri sm" data-act="save" ${S.busy || (!S.cart.skip && !S.cart.items.length) ? 'disabled' : ''}>${S.edit ? esc(shortDate(S.edit.date)) + ' 저장' : hasSaved ? '변경 저장' : '주문 저장'}</button></div>`;
   return `
-    ${S.edit ? `<div class="card" style="border-color:var(--green);background:#F2F9F5"><div class="row sb"><span class="b">관리자 수정 · ${esc(prettyDate(S.edit.date))} · ${esc(me.name)}</span><button class="btn sm" data-act="editEnd">끝내기</button></div></div>` : ''}
+    ${S.edit ? `<div class="card" style="border:2px solid var(--warn);background:#FFFBF2;gap:8px"><div class="row sb"><span class="small b" style="color:var(--warn)">관리자 수정 중</span><button class="btn sm" data-act="editEnd">끝내기</button></div><div style="font-size:20px;font-weight:800">${esc(prettyDate(S.edit.date))}${S.edit.date === S.today ? ' (오늘)' : ''}</div><div class="b">${esc(me.name)}님 주문</div><div class="small muted">이 날짜에 저장돼요. 저장 후 '끝내기'를 눌러주세요.</div>${dayListHtml()}</div>` : ''}
     <div class="dark">
       <div class="row sb">
         <span class="eyebrow">TODAY · ${esc(prettyDate(date))}</span>
@@ -363,6 +377,7 @@ function viewToday() {
   const people = Object.keys(byPerson).map(id => byPerson[id]).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
   const pendText = '점심 주문 아직 안 하신 분: ' + pending.map(p => p.name).join(', ') + '\n' + S.cutoff + ' 전에 골라주세요 👉 ' + SITE_URL;
   return `
+    ${S.edit ? `<div class="card" style="border:2px solid var(--warn);background:#FFFBF2;flex-direction:row;align-items:center;justify-content:space-between"><span class="small b" style="color:var(--warn)">관리자 수정 중 · ${esc(editLabel())}</span><button class="btn sm" data-act="editEnd">끝내기</button></div>` : ''}
     <div><h1 class="h1">오늘 현황</h1><div class="small muted">${esc(prettyDate(date))} · ${esc(S.cutoff)} 마감${remain ? ' · ' + esc(remain) + ' 남음' : ' · 마감됨'}</div></div>
     <div class="stats">
       <div class="stat"><span class="l">주문</span><span class="v num" style="color:var(--green)">${Object.keys(ordered).length}<span class="small muted" style="font-weight:500"> /${S.staff.length}명</span></span></div>
@@ -439,9 +454,13 @@ function viewAdmin() {
     <div class="row sb"><h1 class="h1">관리자</h1><button class="btn sm" data-act="logout">로그아웃</button></div>
     <section class="card">
       <h2 class="h2">주문 수정 · 품절 대체</h2>
-      <div class="small muted">마감 후에도 수정할 수 있어요. 날짜와 사람을 고르면 주문 화면이 열려요.</div>
-      <div class="row"><input class="inp" id="ed-date" type="date" value="${esc(S.today)}" max="${esc(S.today)}" style="flex:1"><select class="sel" id="ed-staff" style="flex:1">${S.staff.map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('')}</select></div>
-      <button class="btn pri full" data-act="editStart">주문 불러오기</button>
+      <div class="small muted">마감 후 추가·변경, 지난 날짜 누락 주문 입력, 품절 대체에 써요.</div>
+      <div class="small b">1. 날짜</div>
+      <div class="pills">${recentDays().map(d => `<button class="opt sq ${S.edDate === d ? 'on' : ''}" data-act="edDate" data-v="${d}">${esc(dayChip(d))}</button>`).join('')}</div>
+      <div class="row"><span class="small muted" style="flex:none">다른 날짜</span><input class="inp" id="ed-date-other" type="date" max="${esc(S.today)}" value="${recentDays().includes(S.edDate) ? '' : esc(S.edDate)}" style="flex:1;height:44px"></div>
+      <div class="small b">2. 사람</div>
+      <select class="sel" id="ed-staff"><option value="">이름 선택</option>${S.staff.map(s => `<option value="${esc(s.id)}" ${S.edStaff === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select>
+      <button class="btn pri full" data-act="editStart" ${S.edDate && S.edStaff ? '' : 'disabled'}>${S.edDate && S.edStaff ? esc(editLabelOf(S.edDate, S.edStaff)) + ' 주문 열기' : '날짜와 사람을 골라주세요'}</button>
     </section>
     <section class="card">
       <div class="row sb"><h2 class="h2">직원</h2><span class="small muted">${st.filter(s => s.active).length}명 활성</span></div>
@@ -507,8 +526,8 @@ function openPin() {
 async function loadMonth() { S.month = null; render(); try { S.month = await api('month', { ym: S.ym, staffId: S.me }); } catch (e) { toast(e.message); } render(); }
 async function refreshToday(silent) {
   try {
-    const d = S.edit ? await api('day', { date: S.edit.date }) : await api('today');
-    applyServer(d);
+    applyServer(await api('today'));
+    if (S.edit && S.edit.date !== S.today) applyServer(await api('day', { date: S.edit.date }));
     if (cartKey(S.cart) === S.savedKey) syncCartFromServer();
     if (!silent) toast('새로고침했어요');
     render();
@@ -520,7 +539,9 @@ async function save() {
   S.busy = true; render();
   try {
     const d = await api('setOrder', { staffId, date: S.edit ? S.edit.date : S.today, skip: S.cart.skip, items: S.cart.items, pin: S.edit ? S.pin : undefined, by: S.edit ? meName() : undefined });
-    applyServer(d); syncCartFromServer(); toast(S.cart.skip ? '오늘은 안 먹음으로 저장했어요' : '주문을 저장했어요');
+    applyServer(d); syncCartFromServer();
+    if (S.edit) toast(editLabel() + ' 주문을 저장했어요');
+    else toast(S.cart.skip ? '오늘은 안 먹음으로 저장했어요' : '주문을 저장했어요');
   } catch (e) { toast(e.message); }
   S.busy = false; render();
 }
@@ -560,8 +581,9 @@ document.addEventListener('click', async e => {
     case 'bill': { const amt = document.getElementById('bill-amt').value, memo = document.getElementById('bill-memo').value; try { S.month = await api('adminBilling', { pin: S.pin, ym: S.ym, amount: amt, memo }); S.month.mine = (await api('month', { ym: S.ym, staffId: S.me })).mine; toast('저장했어요'); } catch (e2) { toast(e2.message); } render(); break; }
     case 'admin': if (S.pin) { S.tab = S.tab === 'admin' ? 'order' : 'admin'; render(); } else openPin(); break;
     case 'logout': S.pin = null; try { sessionStorage.removeItem('lcs_pin'); } catch (e2) {} S.edit = null; S.tab = 'order'; syncCartFromServer(); render(); break;
-    case 'editStart': { const date = document.getElementById('ed-date').value, staffId = document.getElementById('ed-staff').value; try { const d = await api('day', { date }); applyServer(d); S.edit = { date, staffId }; syncCartFromServer(); S.tab = 'order'; render(); } catch (e2) { toast(e2.message); } break; }
-    case 'editEnd': S.edit = null; await refreshToday(true); syncCartFromServer(); render(); break;
+    case 'edDate': S.edDate = v; render(); break;
+    case 'editStart': { const date = S.edDate, staffId = S.edStaff; if (!date || !staffId) return toast('날짜와 사람을 먼저 골라주세요'); try { S.edit = { date, staffId }; S.editOrders = []; applyServer(await api('day', { date })); syncCartFromServer(); S.tab = 'order'; render(); window.scrollTo(0, 0); } catch (e2) { S.edit = null; toast(e2.message); } break; }
+    case 'editEnd': S.edit = null; S.editOrders = []; S.edDate = ''; await refreshToday(true); syncCartFromServer(); S.tab = 'admin'; render(); break;
     case 'stAdd': S.adminStaff = (S.adminStaff || S.staff.map(s => Object.assign({}, s))); readStaffInputs(); S.adminStaff.push({ id: '', name: '', active: true }); render(); break;
     case 'stSave': { readStaffInputs(); S.busy = true; render(); try { const r = await api('adminStaff', { pin: S.pin, staff: S.adminStaff }); S.staff = r.staff.filter(s => s.active); S.adminStaff = r.staff; toast('직원 목록을 저장했어요'); } catch (e2) { toast(e2.message); } S.busy = false; render(); break; }
     case 'mPhoto': pickPhoto(data => { const m = (S.adminMenu || (S.adminMenu = S.menu.map(x => Object.assign({}, x)))).find(x => x.id === id); m.photo = data; render(); toast('사진을 바꿨어요. 저장을 눌러주세요.'); }); break;
@@ -571,6 +593,7 @@ document.addEventListener('click', async e => {
   }
 });
 document.addEventListener('input', e => { const el = e.target; if (el.dataset.act === 'note') { S.cart.items[+el.dataset.i].note = el.value; const b = document.querySelector('.banner'); if (b) render(); } });
+document.addEventListener('change', e => { const el = e.target; if (el.id === 'ed-date-other' && el.value) { S.edDate = el.value; render(); } if (el.id === 'ed-staff') { S.edStaff = el.value; render(); } });
 document.addEventListener('focusout', e => { if (e.target.dataset && e.target.dataset.act === 'note') render(); });
 function readStaffInputs() { if (!S.adminStaff) return; document.querySelectorAll('[data-act=stName]').forEach(inp => { S.adminStaff[+inp.dataset.i].name = inp.value; }); document.querySelectorAll('[data-act=stActive]').forEach(inp => { S.adminStaff[+inp.dataset.i].active = inp.checked; }); }
 
